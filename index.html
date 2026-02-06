@@ -2,21 +2,35 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0a">
 <title>Iconoclast: Find Your Guide</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
-  body {
+  html, body {
     background: #0a0a0a;
+    min-height: 100%;
+    min-height: 100dvh;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-overflow-scrolling: auto;
+    overscroll-behavior: none;
+  }
+
+  body {
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
-    min-height: 100vh;
     font-family: 'Press Start 2P', monospace;
-    overflow: hidden;
   }
 
   #game-wrapper {
@@ -39,59 +53,101 @@
     -ms-interpolation-mode: nearest-neighbor;
     border: 4px solid #2a2a2a;
     border-radius: 4px;
+    touch-action: none;
   }
 
   #mobile-controls {
     display: none;
     position: fixed;
-    bottom: 10px;
+    bottom: 0;
     left: 0;
     right: 0;
     z-index: 100;
-    padding: 0 20px;
+    padding: 10px 16px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    touch-action: none;
+  }
+
+  .controls-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 500px;
+    margin: 0 auto;
   }
 
   .dpad {
     display: grid;
-    grid-template-columns: 50px 50px 50px;
-    grid-template-rows: 50px 50px 50px;
-    gap: 2px;
-    justify-content: center;
+    grid-template-columns: 56px 56px 56px;
+    grid-template-rows: 56px 56px 56px;
+    gap: 3px;
+    touch-action: none;
   }
 
   .dpad button {
-    background: rgba(255,255,255,0.15);
-    border: 2px solid rgba(255,255,255,0.3);
-    border-radius: 6px;
+    background: rgba(255,255,255,0.18);
+    border: 2px solid rgba(255,255,255,0.35);
+    border-radius: 8px;
     color: white;
-    font-size: 18px;
+    font-size: 20px;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
   }
 
-  .dpad button:active { background: rgba(255,255,255,0.35); }
-  .dpad .empty { background: none; border: none; }
+  .dpad button:active { background: rgba(255,255,255,0.4); }
+  .dpad .empty { background: none; border: none; pointer-events: none; }
 
   #action-btn {
-    position: fixed;
-    bottom: 30px;
-    right: 30px;
-    width: 60px;
-    height: 60px;
+    width: 80px;
+    height: 80px;
     border-radius: 50%;
     background: rgba(100,200,100,0.3);
-    border: 2px solid rgba(100,200,100,0.6);
+    border: 3px solid rgba(100,200,100,0.6);
     color: white;
     font-family: 'Press Start 2P', monospace;
-    font-size: 10px;
-    z-index: 100;
+    font-size: 14px;
     display: none;
     touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    flex-shrink: 0;
   }
 
+  #action-btn:active { background: rgba(100,200,100,0.5); }
+
   @media (hover: none) and (pointer: coarse) {
-    #mobile-controls, #action-btn { display: block; }
-    #game-wrapper { max-height: 55vh; max-width: 95vw; }
+    #mobile-controls { display: block; }
+    #action-btn { display: block; }
+
+    body {
+      justify-content: flex-start;
+      padding-top: max(8px, env(safe-area-inset-top));
+    }
+
+    #game-wrapper {
+      width: 100vw;
+      height: calc(100dvh - 200px - env(safe-area-inset-bottom));
+      max-width: 100vw;
+      max-height: calc(100dvh - 200px);
+    }
+
+    canvas {
+      border: none;
+      border-radius: 0;
+    }
+  }
+
+  /* Small phones (iPhone SE, etc) */
+  @media (hover: none) and (pointer: coarse) and (max-height: 700px) {
+    #game-wrapper {
+      height: calc(100dvh - 185px);
+    }
+    .dpad {
+      grid-template-columns: 48px 48px 48px;
+      grid-template-rows: 48px 48px 48px;
+    }
+    #action-btn { width: 68px; height: 68px; font-size: 12px; }
   }
 </style>
 </head>
@@ -102,19 +158,21 @@
 </div>
 
 <div id="mobile-controls">
-  <div class="dpad">
-    <div class="empty"></div>
-    <button id="btn-up">▲</button>
-    <div class="empty"></div>
-    <button id="btn-left">◄</button>
-    <div class="empty"></div>
-    <button id="btn-right">►</button>
-    <div class="empty"></div>
-    <button id="btn-down">▼</button>
-    <div class="empty"></div>
+  <div class="controls-row">
+    <div class="dpad">
+      <div class="empty"></div>
+      <button id="btn-up">▲</button>
+      <div class="empty"></div>
+      <button id="btn-left">◄</button>
+      <div class="empty"></div>
+      <button id="btn-right">►</button>
+      <div class="empty"></div>
+      <button id="btn-down">▼</button>
+      <div class="empty"></div>
+    </div>
+    <button id="action-btn">A</button>
   </div>
 </div>
-<button id="action-btn">A</button>
 
 <script>
 // ========================================
@@ -882,12 +940,35 @@ function advanceDialogue() {
     gameState = 'dialogue';
   } else {
     currentDialogue = null;
-    gameState = 'playing';
+    // During wizard interaction, stay in dialogue state so interact() can advance phases
+    if (currentZone === 4 && wizardPhase > 0 && wizardPhase < 6) {
+      gameState = 'dialogue';
+    } else {
+      gameState = 'playing';
+    }
   }
 }
 
 function drawDialogueBox() {
-  if (!currentDialogue) return;
+  if (!currentDialogue) {
+    // In wizard flow, show a continue prompt
+    if (currentZone === 4 && wizardPhase > 0 && wizardPhase < 6 && gameState === 'dialogue') {
+      ctx.fillStyle = 'rgba(0,0,0,0.9)';
+      ctx.fillRect(8, H - 120, W - 16, 112);
+      ctx.strokeStyle = PAL.wizardGold;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(10, H - 118, W - 20, 108);
+      ctx.fillStyle = PAL.lightGray;
+      ctx.font = '11px "Press Start 2P"';
+      ctx.fillText('...', 24, H - 70);
+      const blink = frameCount % 30 < 20;
+      if (blink) {
+        ctx.fillStyle = PAL.accent;
+        ctx.fillRect(W - 36, H - 20, 10, 10);
+      }
+    }
+    return;
+  }
 
   // Box
   ctx.fillStyle = 'rgba(0,0,0,0.9)';
@@ -1325,18 +1406,15 @@ function interact() {
   interactCooldown = 10;
 
   if (gameState === 'dialogue') {
-    if (!currentDialogue) {
-      if (currentZone === 4 && wizardPhase > 0 && dialogueQueue.length === 0) {
+    if (!currentDialogue && dialogueQueue.length === 0) {
+      // Dialogue fully done — advance wizard if we're in wizard flow
+      if (currentZone === 4 && wizardPhase > 0 && wizardPhase < 6) {
         advanceWizardPhase();
       }
       return;
     }
     playSfxInteract();
     advanceDialogue();
-    // Check if dialogue is done and we're in wizard interaction
-    if (!currentDialogue && currentZone === 4 && wizardPhase > 0) {
-      advanceWizardPhase();
-    }
     return;
   }
 
@@ -1517,16 +1595,18 @@ function setupMobile() {
   for (const [id, key] of Object.entries(dirs)) {
     const btn = document.getElementById(id);
     if (!btn) continue;
-    btn.addEventListener('touchstart', (e) => { e.preventDefault(); keysDown[key] = true; });
-    btn.addEventListener('touchend', (e) => { e.preventDefault(); keysDown[key] = false; });
+    btn.addEventListener('touchstart', (e) => { e.preventDefault(); initAudio(); keysDown[key] = true; }, { passive: false });
+    btn.addEventListener('touchend', (e) => { e.preventDefault(); keysDown[key] = false; }, { passive: false });
+    btn.addEventListener('touchcancel', (e) => { e.preventDefault(); keysDown[key] = false; }, { passive: false });
+    btn.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
   }
+
   const actionBtn = document.getElementById('action-btn');
   if (actionBtn) {
     actionBtn.addEventListener('touchstart', (e) => {
       e.preventDefault();
       initAudio();
       if (gameState === 'title') {
-        // Start game
         playSfxQuizConfirm();
         quizAnswers = [{ question: 'Life Stage', answer: LIFE_STAGES[titleSelection], index: titleSelection }];
         gameState = 'transition';
@@ -1536,25 +1616,34 @@ function setupMobile() {
       } else {
         interact();
       }
-    });
+    }, { passive: false });
+    actionBtn.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
   }
+
+  // Prevent iOS rubber-band scrolling and pull-to-refresh
+  document.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
+  document.addEventListener('gesturestart', (e) => { e.preventDefault(); }, { passive: false });
+  document.addEventListener('gesturechange', (e) => { e.preventDefault(); }, { passive: false });
+  document.addEventListener('gestureend', (e) => { e.preventDefault(); }, { passive: false });
 }
 
 // Canvas click for CTA
-canvas.addEventListener('click', () => {
+canvas.addEventListener('click', (e) => {
   initAudio();
   if (gameState === 'ending') {
+    e.preventDefault();
     window.open('https://iconocapital.com/get-started', '_blank');
   }
 });
 
-// Touch on canvas for title selection
+// Touch on canvas
 canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
   initAudio();
   if (gameState === 'ending') {
     window.open('https://iconocapital.com/get-started', '_blank');
   }
-});
+}, { passive: false });
 
 setupMobile();
 gameLoop();
