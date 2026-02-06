@@ -1,0 +1,1329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Iconoclast: Find Your Guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0a;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-family: 'Press Start 2P', monospace;
+    overflow: hidden;
+  }
+
+  #game-wrapper {
+    position: relative;
+    width: 95vmin;
+    height: 95vmin;
+    max-width: 800px;
+    max-height: 800px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    -ms-interpolation-mode: nearest-neighbor;
+  }
+
+  canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    -ms-interpolation-mode: nearest-neighbor;
+    border: 4px solid #2a2a2a;
+    border-radius: 4px;
+  }
+
+  #mobile-controls {
+    display: none;
+    position: fixed;
+    bottom: 10px;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    padding: 0 20px;
+  }
+
+  .dpad {
+    display: grid;
+    grid-template-columns: 50px 50px 50px;
+    grid-template-rows: 50px 50px 50px;
+    gap: 2px;
+    justify-content: center;
+  }
+
+  .dpad button {
+    background: rgba(255,255,255,0.15);
+    border: 2px solid rgba(255,255,255,0.3);
+    border-radius: 6px;
+    color: white;
+    font-size: 18px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .dpad button:active { background: rgba(255,255,255,0.35); }
+  .dpad .empty { background: none; border: none; }
+
+  #action-btn {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: rgba(100,200,100,0.3);
+    border: 2px solid rgba(100,200,100,0.6);
+    color: white;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 10px;
+    z-index: 100;
+    display: none;
+    touch-action: manipulation;
+  }
+
+  @media (hover: none) and (pointer: coarse) {
+    #mobile-controls, #action-btn { display: block; }
+    #game-wrapper { max-height: 55vh; max-width: 95vw; }
+  }
+</style>
+</head>
+<body>
+
+<div id="game-wrapper">
+  <canvas id="game" width="480" height="480"></canvas>
+</div>
+
+<div id="mobile-controls">
+  <div class="dpad">
+    <div class="empty"></div>
+    <button id="btn-up">▲</button>
+    <div class="empty"></div>
+    <button id="btn-left">◄</button>
+    <div class="empty"></div>
+    <button id="btn-right">►</button>
+    <div class="empty"></div>
+    <button id="btn-down">▼</button>
+    <div class="empty"></div>
+  </div>
+</div>
+<button id="action-btn">A</button>
+
+<script>
+// ========================================
+// ICONOCLAST: FIND YOUR GUIDE
+// A retro RPG financial planning journey
+// ========================================
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = 480, H = 480;
+const TILE = 32;
+const COLS = W / TILE; // 15
+const ROWS = H / TILE; // 15
+
+// Disable anti-aliasing for crisp pixels
+ctx.imageSmoothingEnabled = false;
+ctx.mozImageSmoothingEnabled = false;
+ctx.webkitImageSmoothingEnabled = false;
+ctx.msImageSmoothingEnabled = false;
+
+// Color palette
+const PAL = {
+  black: '#0a0a0a',
+  dark: '#1a1a2e',
+  mid: '#16213e',
+  accent: '#e2b714',
+  green: '#4a7c59',
+  darkGreen: '#2d5a3f',
+  red: '#8b3a3a',
+  blue: '#3a5a8b',
+  lightBlue: '#6a9fd8',
+  white: '#e8e8e8',
+  gray: '#6a6a7a',
+  lightGray: '#a8a8b8',
+  skin: '#f0c8a0',
+  brown: '#6e4930',
+  purple: '#6a3a8a',
+  orange: '#d4853a',
+  teal: '#3a8a7a',
+  wizardBlue: '#4a90d9',
+  wizardGold: '#f4d03f',
+};
+
+// ========== GAME STATE ==========
+let gameState = 'title'; // title, playing, dialogue, quiz, transition, ending
+let currentZone = 0;
+let player = { x: 7, y: 12, dir: 0, frame: 0, moving: false };
+let dialogueQueue = [];
+let currentDialogue = null;
+let dialogueCharIndex = 0;
+let dialogueTimer = 0;
+let quizData = null;
+let quizSelection = 0;
+let quizAnswers = [];
+let transitionAlpha = 0;
+let transitionDir = 0; // 0=none, 1=fadeOut, 2=fadeIn
+let transitionCallback = null;
+let titleSelection = 0;
+let endingPhase = 0;
+let endingTimer = 0;
+let npcs = [];
+let frameCount = 0;
+let keysDown = {};
+let moveTimer = 0;
+let interactCooldown = 0;
+
+// Life stage labels
+const LIFE_STAGES = [
+  "Just starting out (20s-30s)",
+  "Building & growing (30s-40s)",
+  "Protecting what I've built (50s+)"
+];
+
+// ========== ZONE DEFINITIONS ==========
+const ZONES = [
+  // Zone 0: Uncertainville
+  {
+    name: "Uncertainville",
+    bgColor: '#1a1a2e',
+    music: null,
+    map: null, // generated procedurally
+    playerStart: { x: 7, y: 12 },
+    exitTile: { x: 7, y: 1 },
+    introDialogue: [
+      "You wake up in UNCERTAINVILLE.",
+      "You know you need a plan for\nyour money... but where do\nyou even start?",
+      "The world ahead is full of\nnoise. Find your way through.",
+      "HEAD NORTH to begin your\njourney. Talk to people with\nSPACE or ENTER."
+    ],
+    npcs: [
+      { x: 5, y: 8, type: 'villager', lines: ["Everyone says something\ndifferent about money...", "I just want someone to tell\nme the truth."] },
+      { x: 10, y: 10, type: 'villager', lines: ["I heard you should save 20%\nof your income. Or was it 15?\nOr 30%?"] },
+      { x: 3, y: 5, type: 'sign', lines: ["NORTH: The unknown path\n\nYour financial journey awaits."] },
+    ]
+  },
+  // Zone 1: The Media Swamp
+  {
+    name: "The Media Swamp",
+    bgColor: '#1a2e1a',
+    playerStart: { x: 7, y: 13 },
+    exitTile: { x: 7, y: 1 },
+    introDialogue: [
+      "You enter THE MEDIA SWAMP.",
+      "Screens and headlines scream\nfrom every direction...",
+      "Don't let the noise\noverwhelm you."
+    ],
+    npcs: [
+      { x: 3, y: 9, type: 'tv', lines: ["BREAKING: MARKET CRASH\nIMMINENT! SELL EVERYTHING!"] },
+      { x: 11, y: 7, type: 'tv', lines: ["EXPERT WARNS: You're NOT\nsaving enough for retirement!"] },
+      { x: 6, y: 5, type: 'tv', lines: ["HOT STOCK TIP: This one\nweird trick will 10X your\nportfolio!"] },
+      { x: 9, y: 11, type: 'tv', lines: ["RECESSION WARNING: Is your\nmoney SAFE? Probably not!"] },
+      { x: 4, y: 4, type: 'reporter', lines: ["I get paid more when you're\nscared. Nothing personal."] },
+    ],
+    quiz: {
+      trigger: { x: 7, y: 3 },
+      question: "When you see a scary headline\nabout the markets, you...",
+      options: [
+        "Panic and want to sell",
+        "Feel anxious but hold steady",
+        "Ignore it completely",
+        "Research before reacting"
+      ]
+    }
+  },
+  // Zone 2: The Opinion Forest
+  {
+    name: "The Opinion Forest",
+    bgColor: '#2e2a1a',
+    playerStart: { x: 7, y: 13 },
+    exitTile: { x: 7, y: 1 },
+    introDialogue: [
+      "You wander into\nTHE OPINION FOREST.",
+      "Everyone here is an expert.\nJust ask them.",
+    ],
+    npcs: [
+      { x: 4, y: 10, type: 'coworker', lines: ["My brother-in-law made a\nkilling on crypto. You should\nput everything in Bitcoin."] },
+      { x: 10, y: 8, type: 'family', lines: ["Your father and I just think\nyou should buy a house.\nRenting is throwing money away."] },
+      { x: 3, y: 5, type: 'friend', lines: ["Dude, index funds. That's it.\nAnyone who says otherwise is\ntrying to sell you something."] },
+      { x: 11, y: 4, type: 'coworker', lines: ["I don't trust ANY financial\nadvisor. They're all crooks.\nJust do it yourself."] },
+      { x: 7, y: 7, type: 'friend', lines: ["Have you tried that app?\nIt basically replaces a\nfinancial planner. For free!"] },
+    ],
+    quiz: {
+      trigger: { x: 7, y: 3 },
+      question: "When everyone gives you\nconflicting advice, you...",
+      options: [
+        "Go with whoever sounds most confident",
+        "Do nothing — too overwhelmed",
+        "Try to research it yourself",
+        "Wish I had a trusted guide"
+      ]
+    }
+  },
+  // Zone 3: The Worry Mountains
+  {
+    name: "The Worry Mountains",
+    bgColor: '#1a1a2e',
+    playerStart: { x: 7, y: 13 },
+    exitTile: { x: 7, y: 1 },
+    introDialogue: [
+      "You climb into\nTHE WORRY MOUNTAINS.",
+      "It's quieter here.\nThe noise is replaced by\nyour own thoughts...",
+    ],
+    npcs: [
+      { x: 4, y: 9, type: 'thought', lines: ["What if I make the wrong\nchoice and it costs my\nfamily everything?"] },
+      { x: 10, y: 7, type: 'thought', lines: ["My kids are counting on me.\nWhat if I'm not doing\nenough?"] },
+      { x: 6, y: 4, type: 'thought', lines: ["I'm already behind.\nEveryone else seems to have\nit figured out..."] },
+      { x: 9, y: 11, type: 'thought', lines: ["What if I trust the wrong\nperson with my money?"] },
+      { x: 3, y: 6, type: 'thought', lines: ["Am I the only one who feels\ncompletely lost?"] },
+    ],
+    quiz: {
+      trigger: { x: 7, y: 3 },
+      question: "What worries you most about\nyour financial future?",
+      options: [
+        "Not having enough to retire",
+        "Something happening to me or my family",
+        "Making a costly mistake",
+        "Not knowing who to trust"
+      ]
+    }
+  },
+  // Zone 4: The Wizard's Tower
+  {
+    name: "The Wizard's Tower",
+    bgColor: '#0e0e2a',
+    playerStart: { x: 7, y: 13 },
+    exitTile: null,
+    introDialogue: [
+      "A warm light glows ahead...",
+      "You've made it through the\nnoise, the opinions, and\nthe worry.",
+      "Someone is waiting for you.",
+    ],
+    npcs: [],
+    wizard: { x: 7, y: 5 }
+  }
+];
+
+// ========== PIXEL ART SPRITE DRAWING ==========
+function drawSprite(x, y, type, dir, frame) {
+  const px = x * TILE;
+  const py = y * TILE;
+
+  if (type === 'player') {
+    // Hero character - simple RPG protagonist
+    const bobY = frame % 2 === 0 && player.moving ? -2 : 0;
+    // Body
+    ctx.fillStyle = PAL.blue;
+    ctx.fillRect(px + 8, py + 12 + bobY, 16, 14);
+    // Head
+    ctx.fillStyle = PAL.skin;
+    ctx.fillRect(px + 10, py + 2 + bobY, 12, 10);
+    // Hair
+    ctx.fillStyle = PAL.brown;
+    ctx.fillRect(px + 10, py + 2 + bobY, 12, 4);
+    // Eyes
+    ctx.fillStyle = PAL.black;
+    if (dir === 0) { // down
+      ctx.fillRect(px + 12, py + 8 + bobY, 2, 2);
+      ctx.fillRect(px + 18, py + 8 + bobY, 2, 2);
+    } else if (dir === 1) { // up
+      // back of head
+    } else if (dir === 2) { // left
+      ctx.fillRect(px + 10, py + 8 + bobY, 2, 2);
+    } else { // right
+      ctx.fillRect(px + 20, py + 8 + bobY, 2, 2);
+    }
+    // Legs
+    ctx.fillStyle = PAL.dark;
+    const legOff = frame % 2 === 0 && player.moving ? 2 : 0;
+    ctx.fillRect(px + 10, py + 26 + bobY, 6, 4);
+    ctx.fillRect(px + 16 + legOff, py + 26 + bobY, 6, 4);
+  }
+  else if (type === 'villager') {
+    ctx.fillStyle = PAL.green;
+    ctx.fillRect(px + 8, py + 12, 16, 14);
+    ctx.fillStyle = PAL.skin;
+    ctx.fillRect(px + 10, py + 2, 12, 10);
+    ctx.fillStyle = PAL.darkGreen;
+    ctx.fillRect(px + 10, py + 2, 12, 4);
+    ctx.fillStyle = PAL.black;
+    ctx.fillRect(px + 12, py + 8, 2, 2);
+    ctx.fillRect(px + 18, py + 8, 2, 2);
+    ctx.fillStyle = PAL.dark;
+    ctx.fillRect(px + 10, py + 26, 6, 4);
+    ctx.fillRect(px + 16, py + 26, 6, 4);
+  }
+  else if (type === 'tv') {
+    // TV screen
+    ctx.fillStyle = '#3a3a4a';
+    ctx.fillRect(px + 4, py + 4, 24, 20);
+    ctx.fillStyle = (frameCount % 30 < 15) ? '#ff4444' : '#ff8844';
+    ctx.fillRect(px + 6, py + 6, 20, 16);
+    // Static lines
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    for (let i = 0; i < 4; i++) {
+      ctx.fillRect(px + 6, py + 6 + i * 4 + (frameCount % 3), 20, 2);
+    }
+    // Stand
+    ctx.fillStyle = '#3a3a4a';
+    ctx.fillRect(px + 12, py + 24, 8, 4);
+    // Antenna
+    ctx.fillRect(px + 10, py, 2, 6);
+    ctx.fillRect(px + 20, py, 2, 6);
+    // Exclamation
+    ctx.fillStyle = PAL.red;
+    ctx.font = '12px "Press Start 2P"';
+    ctx.fillText('!', px + 14, py);
+  }
+  else if (type === 'reporter') {
+    ctx.fillStyle = PAL.red;
+    ctx.fillRect(px + 8, py + 12, 16, 14);
+    ctx.fillStyle = PAL.skin;
+    ctx.fillRect(px + 10, py + 2, 12, 10);
+    ctx.fillStyle = PAL.dark;
+    ctx.fillRect(px + 10, py + 2, 12, 4);
+    ctx.fillStyle = PAL.black;
+    ctx.fillRect(px + 12, py + 8, 2, 2);
+    ctx.fillRect(px + 18, py + 8, 2, 2);
+    // Mic
+    ctx.fillStyle = PAL.gray;
+    ctx.fillRect(px + 24, py + 14, 6, 4);
+    ctx.fillRect(px + 26, py + 10, 2, 4);
+  }
+  else if (type === 'coworker') {
+    ctx.fillStyle = '#5a5a6a';
+    ctx.fillRect(px + 8, py + 12, 16, 14);
+    ctx.fillStyle = PAL.skin;
+    ctx.fillRect(px + 10, py + 2, 12, 10);
+    ctx.fillStyle = '#4a4a5a';
+    ctx.fillRect(px + 10, py + 2, 12, 4);
+    ctx.fillStyle = PAL.black;
+    ctx.fillRect(px + 12, py + 8, 2, 2);
+    ctx.fillRect(px + 18, py + 8, 2, 2);
+    // Tie
+    ctx.fillStyle = PAL.red;
+    ctx.fillRect(px + 14, py + 12, 4, 8);
+  }
+  else if (type === 'family') {
+    ctx.fillStyle = PAL.purple;
+    ctx.fillRect(px + 8, py + 12, 16, 14);
+    ctx.fillStyle = PAL.skin;
+    ctx.fillRect(px + 10, py + 2, 12, 10);
+    ctx.fillStyle = '#8a6a4a';
+    ctx.fillRect(px + 8, py + 2, 16, 4);
+    ctx.fillStyle = PAL.black;
+    ctx.fillRect(px + 12, py + 8, 2, 2);
+    ctx.fillRect(px + 18, py + 8, 2, 2);
+  }
+  else if (type === 'friend') {
+    ctx.fillStyle = PAL.orange;
+    ctx.fillRect(px + 8, py + 12, 16, 14);
+    ctx.fillStyle = PAL.skin;
+    ctx.fillRect(px + 10, py + 2, 12, 10);
+    ctx.fillStyle = PAL.brown;
+    ctx.fillRect(px + 10, py + 2, 12, 4);
+    ctx.fillStyle = PAL.black;
+    ctx.fillRect(px + 12, py + 8, 2, 2);
+    ctx.fillRect(px + 18, py + 8, 2, 2);
+    // Baseball cap
+    ctx.fillStyle = PAL.red;
+    ctx.fillRect(px + 8, py + 2, 16, 4);
+    ctx.fillRect(px + 6, py + 4, 4, 2);
+  }
+  else if (type === 'thought') {
+    // Floating thought bubble
+    const bob = Math.sin(frameCount * 0.05 + x + y) * 4;
+    ctx.fillStyle = 'rgba(180,180,220,0.6)';
+    ctx.beginPath();
+    ctx.arc(px + 16, py + 12 + bob, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(140,140,180,0.8)';
+    ctx.beginPath();
+    ctx.arc(px + 16, py + 12 + bob, 8, 0, Math.PI * 2);
+    ctx.fill();
+    // "..." inside
+    ctx.fillStyle = PAL.white;
+    ctx.fillRect(px + 10, py + 12 + bob, 2, 2);
+    ctx.fillRect(px + 16, py + 12 + bob, 2, 2);
+    ctx.fillRect(px + 22, py + 12 + bob, 2, 2);
+  }
+  else if (type === 'sign') {
+    ctx.fillStyle = PAL.brown;
+    ctx.fillRect(px + 14, py + 16, 4, 14);
+    ctx.fillStyle = PAL.accent;
+    ctx.fillRect(px + 4, py + 6, 24, 12);
+    ctx.fillStyle = PAL.dark;
+    ctx.fillRect(px + 6, py + 8, 20, 8);
+    ctx.fillStyle = PAL.white;
+    ctx.fillRect(px + 10, py + 10, 2, 2);
+    ctx.fillRect(px + 14, py + 10, 2, 2);
+    ctx.fillRect(px + 18, py + 10, 2, 2);
+  }
+  else if (type === 'wizard') {
+    const bob = Math.sin(frameCount * 0.03) * 2;
+    // Robe
+    ctx.fillStyle = PAL.wizardBlue;
+    ctx.fillRect(px + 6, py + 12 + bob, 20, 16);
+    // Robe bottom detail
+    ctx.fillStyle = '#3a70b0';
+    ctx.fillRect(px + 6, py + 24 + bob, 20, 4);
+    // Face
+    ctx.fillStyle = PAL.skin;
+    ctx.fillRect(px + 10, py + 4 + bob, 12, 8);
+    // Beard
+    ctx.fillStyle = PAL.white;
+    ctx.fillRect(px + 12, py + 10 + bob, 8, 6);
+    ctx.fillRect(px + 14, py + 16 + bob, 4, 2);
+    // Hat
+    ctx.fillStyle = PAL.wizardBlue;
+    ctx.fillRect(px + 8, py + 2 + bob, 16, 4);
+    ctx.fillRect(px + 10, py - 2 + bob, 12, 4);
+    ctx.fillRect(px + 12, py - 6 + bob, 8, 4);
+    ctx.fillRect(px + 14, py - 8 + bob, 4, 2);
+    // Hat star
+    ctx.fillStyle = PAL.wizardGold;
+    ctx.fillRect(px + 14, py - 4 + bob, 4, 4);
+    // Eyes
+    ctx.fillStyle = PAL.black;
+    ctx.fillRect(px + 12, py + 6 + bob, 2, 2);
+    ctx.fillRect(px + 18, py + 6 + bob, 2, 2);
+    // Staff (on side)
+    ctx.fillStyle = PAL.brown;
+    ctx.fillRect(px + 26, py - 4 + bob, 2, 32);
+    // Orb on staff
+    ctx.fillStyle = PAL.wizardGold;
+    ctx.fillRect(px + 24, py - 8 + bob, 6, 6);
+    // Glow
+    if (frameCount % 40 < 20) {
+      ctx.fillStyle = 'rgba(244, 208, 63, 0.2)';
+      ctx.beginPath();
+      ctx.arc(px + 26, py - 6 + bob, 10, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+// ========== MAP DRAWING ==========
+function drawZoneBackground(zone) {
+  const z = ZONES[zone];
+
+  if (zone === 0) {
+    // Uncertainville - small village
+    ctx.fillStyle = '#2a3a2a';
+    ctx.fillRect(0, 0, W, H);
+    // Grass variation
+    for (let x = 0; x < COLS; x++) {
+      for (let y = 0; y < ROWS; y++) {
+        const hash = (x * 7 + y * 13) % 5;
+        ctx.fillStyle = hash === 0 ? '#2e4e2e' : hash === 1 ? '#264226' : '#2a3a2a';
+        ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+      }
+    }
+    // Path (vertical road)
+    for (let y = 0; y < ROWS; y++) {
+      ctx.fillStyle = '#5a5040';
+      ctx.fillRect(6 * TILE, y * TILE, 3 * TILE, TILE);
+      ctx.fillStyle = '#4a4030';
+      ctx.fillRect(6 * TILE + 2, y * TILE + 6, TILE - 4, 2);
+    }
+    // Houses
+    drawHouse(1, 7);
+    drawHouse(11, 9);
+    drawHouse(1, 11);
+    // Trees
+    drawTree(0, 2); drawTree(13, 3); drawTree(0, 5);
+    drawTree(12, 6); drawTree(14, 1); drawTree(0, 0);
+    drawTree(13, 0); drawTree(11, 2);
+    // Exit indicator
+    drawExitArrow(7, 0);
+  }
+  else if (zone === 1) {
+    // Media Swamp
+    ctx.fillStyle = '#1a2a1a';
+    ctx.fillRect(0, 0, W, H);
+    for (let x = 0; x < COLS; x++) {
+      for (let y = 0; y < ROWS; y++) {
+        const hash = (x * 11 + y * 7 + frameCount * 0.01) % 4;
+        ctx.fillStyle = hash < 1 ? '#1e2e1a' : hash < 2 ? '#1a2a18' : '#1c2c1c';
+        ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+        // Swamp bubbles
+        if ((x * 3 + y * 17) % 23 === 0 && frameCount % 60 < 10) {
+          ctx.fillStyle = 'rgba(100,150,100,0.3)';
+          ctx.beginPath();
+          ctx.arc(x * TILE + 16, y * TILE + 16, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    // Path
+    for (let y = 0; y < ROWS; y++) {
+      ctx.fillStyle = '#3a3a30';
+      ctx.fillRect(6 * TILE, y * TILE, 3 * TILE, TILE);
+    }
+    // Cables/wires
+    ctx.strokeStyle = '#4a4a4a';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.moveTo(0, 60 + i * 100);
+      ctx.lineTo(W, 80 + i * 100);
+      ctx.stroke();
+    }
+    drawExitArrow(7, 0);
+  }
+  else if (zone === 2) {
+    // Opinion Forest
+    ctx.fillStyle = '#2a2a1a';
+    ctx.fillRect(0, 0, W, H);
+    for (let x = 0; x < COLS; x++) {
+      for (let y = 0; y < ROWS; y++) {
+        const hash = (x * 13 + y * 9) % 4;
+        ctx.fillStyle = hash === 0 ? '#2e2e1e' : hash === 1 ? '#262618' : '#2a2a1a';
+        ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+      }
+    }
+    // Path
+    for (let y = 0; y < ROWS; y++) {
+      ctx.fillStyle = '#4a4030';
+      ctx.fillRect(6 * TILE, y * TILE, 3 * TILE, TILE);
+    }
+    // Dense trees
+    drawTree(0, 1); drawTree(1, 3); drawTree(0, 6); drawTree(1, 9);
+    drawTree(0, 12); drawTree(12, 0); drawTree(13, 2); drawTree(14, 5);
+    drawTree(12, 8); drawTree(13, 11); drawTree(14, 13);
+    drawTree(2, 0); drawTree(12, 13);
+    drawExitArrow(7, 0);
+  }
+  else if (zone === 3) {
+    // Worry Mountains
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, W, H);
+    for (let x = 0; x < COLS; x++) {
+      for (let y = 0; y < ROWS; y++) {
+        const hash = (x * 5 + y * 11) % 5;
+        ctx.fillStyle = hash < 2 ? '#1e1e32' : hash < 4 ? '#1a1a2e' : '#22223a';
+        ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+      }
+    }
+    // Mountain peaks in background
+    ctx.fillStyle = '#2a2a4a';
+    for (let i = 0; i < 5; i++) {
+      const mx = i * 110 + 20;
+      ctx.beginPath();
+      ctx.moveTo(mx - 50, 160);
+      ctx.lineTo(mx, 20 + i * 10);
+      ctx.lineTo(mx + 50, 160);
+      ctx.fill();
+    }
+    // Snow caps
+    ctx.fillStyle = '#8888aa';
+    for (let i = 0; i < 5; i++) {
+      const mx = i * 110 + 20;
+      ctx.beginPath();
+      ctx.moveTo(mx - 16, 50 + i * 10);
+      ctx.lineTo(mx, 20 + i * 10);
+      ctx.lineTo(mx + 16, 50 + i * 10);
+      ctx.fill();
+    }
+    // Path
+    for (let y = 5; y < ROWS; y++) {
+      ctx.fillStyle = '#3a3a50';
+      ctx.fillRect(6 * TILE, y * TILE, 3 * TILE, TILE);
+    }
+    drawExitArrow(7, 0);
+  }
+  else if (zone === 4) {
+    // Wizard's Tower
+    ctx.fillStyle = '#0e0e2a';
+    ctx.fillRect(0, 0, W, H);
+    // Starfield
+    for (let i = 0; i < 30; i++) {
+      const sx = (i * 37 + frameCount * 0.1) % W;
+      const sy = (i * 53) % H;
+      const brightness = Math.sin(frameCount * 0.02 + i) * 0.3 + 0.7;
+      ctx.fillStyle = `rgba(255,255,255,${brightness * 0.6})`;
+      ctx.fillRect(Math.floor(sx), Math.floor(sy), 2, 2);
+    }
+    // Tower base
+    ctx.fillStyle = '#2a2a5a';
+    ctx.fillRect(4 * TILE, 2 * TILE, 7 * TILE, 8 * TILE);
+    ctx.fillStyle = '#22224a';
+    ctx.fillRect(5 * TILE, 1 * TILE, 5 * TILE, 1 * TILE);
+    ctx.fillStyle = '#1a1a3a';
+    ctx.fillRect(6 * TILE, 0, 3 * TILE, 1 * TILE);
+    // Door
+    ctx.fillStyle = '#4a3a2a';
+    ctx.fillRect(6 * TILE + 8, 9 * TILE, 2 * TILE + 16, 1 * TILE);
+    // Windows with warm light
+    const glowAlpha = Math.sin(frameCount * 0.03) * 0.15 + 0.6;
+    ctx.fillStyle = `rgba(244, 208, 63, ${glowAlpha})`;
+    ctx.fillRect(5 * TILE + 8, 4 * TILE, 16, 16);
+    ctx.fillRect(9 * TILE + 8, 4 * TILE, 16, 16);
+    ctx.fillRect(7 * TILE + 4, 3 * TILE, 20, 16);
+    // Warm light path
+    ctx.fillStyle = `rgba(244, 208, 63, 0.05)`;
+    for (let y = 10; y < ROWS; y++) {
+      ctx.fillRect(5 * TILE, y * TILE, 5 * TILE, TILE);
+    }
+    // Ground path
+    ctx.fillStyle = '#2a2a3a';
+    for (let y = 10; y < ROWS; y++) {
+      ctx.fillRect(6 * TILE, y * TILE, 3 * TILE, TILE);
+    }
+  }
+}
+
+function drawHouse(x, y) {
+  ctx.fillStyle = '#6a5a4a';
+  ctx.fillRect(x * TILE, y * TILE, 2 * TILE, 2 * TILE);
+  ctx.fillStyle = '#8a3a2a';
+  ctx.fillRect(x * TILE - 4, (y - 1) * TILE + 16, 2 * TILE + 8, TILE);
+  // Door
+  ctx.fillStyle = '#4a3a2a';
+  ctx.fillRect(x * TILE + 10, y * TILE + TILE, 12, TILE);
+  // Window
+  ctx.fillStyle = PAL.accent;
+  ctx.fillRect(x * TILE + TILE + 8, y * TILE + 8, 12, 10);
+}
+
+function drawTree(x, y) {
+  ctx.fillStyle = '#3a2a1a';
+  ctx.fillRect(x * TILE + 12, y * TILE + 18, 8, 12);
+  ctx.fillStyle = '#2a5a2a';
+  ctx.fillRect(x * TILE + 4, y * TILE + 4, 24, 16);
+  ctx.fillStyle = '#3a6a3a';
+  ctx.fillRect(x * TILE + 8, y * TILE, 16, 12);
+}
+
+function drawExitArrow(x, y) {
+  const blink = frameCount % 40 < 25;
+  if (blink) {
+    ctx.fillStyle = PAL.accent;
+    ctx.fillRect(x * TILE + 10, y * TILE + 4, 12, 4);
+    ctx.fillRect(x * TILE + 12, y * TILE, 8, 4);
+    ctx.fillRect(x * TILE + 14, y * TILE - 2, 4, 2);
+  }
+}
+
+// ========== COLLISION ==========
+function isWalkable(x, y) {
+  if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return false;
+  // Check NPCs
+  for (const npc of npcs) {
+    if (npc.x === x && npc.y === y) return false;
+  }
+  // Zone-specific walls
+  if (currentZone === 0) {
+    // Houses block
+    if ((x >= 1 && x <= 2 && y >= 7 && y <= 8) ||
+        (x >= 11 && x <= 12 && y >= 9 && y <= 10) ||
+        (x >= 1 && x <= 2 && y >= 11 && y <= 12)) return false;
+    // Trees block
+    const trees = [[0,2],[13,3],[0,5],[12,6],[14,1],[0,0],[13,0],[11,2]];
+    for (const t of trees) { if (t[0] === x && t[1] === y) return false; }
+  }
+  else if (currentZone === 2) {
+    const trees = [[0,1],[1,3],[0,6],[1,9],[0,12],[12,0],[13,2],[14,5],[12,8],[13,11],[14,13],[2,0],[12,13]];
+    for (const t of trees) { if (t[0] === x && t[1] === y) return false; }
+  }
+  else if (currentZone === 4) {
+    // Tower walls
+    if (y < 10 && (x < 4 || x > 10)) return true;
+    if (y >= 2 && y < 10 && x >= 4 && x <= 10 && !(x >= 6 && x <= 8 && y === 9)) return false;
+    // Wizard blocks at their position
+    const wiz = ZONES[4].wizard;
+    if (wiz && x === wiz.x && y === wiz.y) return false;
+  }
+  return true;
+}
+
+// ========== DIALOGUE SYSTEM ==========
+function showDialogue(lines) {
+  dialogueQueue = [...lines];
+  advanceDialogue();
+}
+
+function advanceDialogue() {
+  if (currentDialogue && dialogueCharIndex < currentDialogue.length) {
+    dialogueCharIndex = currentDialogue.length;
+    return;
+  }
+  if (dialogueQueue.length > 0) {
+    currentDialogue = dialogueQueue.shift();
+    dialogueCharIndex = 0;
+    dialogueTimer = 0;
+    gameState = 'dialogue';
+  } else {
+    currentDialogue = null;
+    gameState = 'playing';
+  }
+}
+
+function drawDialogueBox() {
+  if (!currentDialogue) return;
+
+  // Box
+  ctx.fillStyle = 'rgba(0,0,0,0.9)';
+  ctx.fillRect(8, H - 120, W - 16, 112);
+  ctx.strokeStyle = PAL.white;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(10, H - 118, W - 20, 108);
+
+  // Text
+  const shown = currentDialogue.substring(0, dialogueCharIndex);
+  ctx.fillStyle = PAL.white;
+  ctx.font = '13px "Press Start 2P"';
+  const lines = shown.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], 24, H - 90 + i * 24);
+  }
+
+  // Advance indicator
+  if (dialogueCharIndex >= currentDialogue.length) {
+    const blink = frameCount % 30 < 20;
+    if (blink) {
+      ctx.fillStyle = PAL.accent;
+      ctx.fillRect(W - 36, H - 20, 10, 10);
+    }
+  }
+
+  // Auto-advance text
+  dialogueTimer++;
+  if (dialogueTimer % 2 === 0 && dialogueCharIndex < currentDialogue.length) {
+    dialogueCharIndex++;
+  }
+}
+
+// ========== QUIZ SYSTEM ==========
+function showQuiz(quiz) {
+  quizData = quiz;
+  quizSelection = 0;
+  gameState = 'quiz';
+}
+
+function drawQuiz() {
+  if (!quizData) return;
+
+  // Overlay
+  ctx.fillStyle = 'rgba(0,0,0,0.92)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Question
+  ctx.fillStyle = PAL.accent;
+  ctx.font = '13px "Press Start 2P"';
+  const qLines = quizData.question.split('\n');
+  for (let i = 0; i < qLines.length; i++) {
+    ctx.fillText(qLines[i], 24, 60 + i * 24);
+  }
+
+  // Options
+  const startY = 140;
+  for (let i = 0; i < quizData.options.length; i++) {
+    const selected = i === quizSelection;
+    ctx.fillStyle = selected ? PAL.accent : PAL.gray;
+    ctx.font = '11px "Press Start 2P"';
+    const prefix = selected ? '► ' : '  ';
+    ctx.fillText(prefix + quizData.options[i], 24, startY + i * 52);
+
+    if (selected) {
+      ctx.fillStyle = 'rgba(226,183,20,0.1)';
+      ctx.fillRect(16, startY + i * 52 - 16, W - 32, 30);
+    }
+  }
+
+  // Instructions
+  ctx.fillStyle = PAL.lightGray;
+  ctx.font = '10px "Press Start 2P"';
+  ctx.fillText('↑↓ choose  SPACE select', 16, H - 24);
+}
+
+function selectQuizAnswer() {
+  quizAnswers.push({
+    question: quizData.question,
+    answer: quizData.options[quizSelection],
+    index: quizSelection
+  });
+  quizData = null;
+  gameState = 'playing';
+  // Transition to next zone
+  startTransition(() => {
+    currentZone++;
+    setupZone();
+  });
+}
+
+// ========== TRANSITIONS ==========
+function startTransition(callback) {
+  transitionAlpha = 0;
+  transitionDir = 1;
+  transitionCallback = callback;
+  gameState = 'transition';
+}
+
+function updateTransition() {
+  if (transitionDir === 1) {
+    transitionAlpha += 0.04;
+    if (transitionAlpha >= 1) {
+      transitionAlpha = 1;
+      transitionDir = 2;
+      if (transitionCallback) transitionCallback();
+    }
+  } else if (transitionDir === 2) {
+    transitionAlpha -= 0.04;
+    if (transitionAlpha <= 0) {
+      transitionAlpha = 0;
+      transitionDir = 0;
+      gameState = 'playing';
+      // Show intro dialogue for new zone
+      const z = ZONES[currentZone];
+      if (z.introDialogue) {
+        showDialogue(z.introDialogue);
+      }
+    }
+  }
+}
+
+function drawTransition() {
+  ctx.fillStyle = `rgba(0,0,0,${transitionAlpha})`;
+  ctx.fillRect(0, 0, W, H);
+}
+
+// ========== TITLE SCREEN ==========
+function drawTitleScreen() {
+  ctx.fillStyle = '#0a0a1a';
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  for (let i = 0; i < 40; i++) {
+    const sx = (i * 37 + Math.sin(frameCount * 0.01 + i) * 10) % W;
+    const sy = (i * 53 + Math.cos(frameCount * 0.01 + i) * 6) % H;
+    ctx.fillStyle = `rgba(255,255,255,${Math.sin(frameCount * 0.03 + i) * 0.3 + 0.5})`;
+    ctx.fillRect(Math.floor(sx), Math.floor(sy), 2, 2);
+  }
+
+  // Title
+  ctx.fillStyle = PAL.wizardGold;
+  ctx.font = '20px "Press Start 2P"';
+  ctx.textAlign = 'center';
+  ctx.fillText('ICONOCLAST', W / 2, 100);
+  ctx.fillStyle = PAL.white;
+  ctx.font = '14px "Press Start 2P"';
+  ctx.fillText('Find Your Guide', W / 2, 140);
+
+  // Wizard preview
+  ctx.textAlign = 'left';
+  drawSprite(7, 5, 'wizard', 0, 0);
+
+  // Life stage selection
+  ctx.fillStyle = PAL.accent;
+  ctx.font = '12px "Press Start 2P"';
+  ctx.textAlign = 'center';
+  ctx.fillText("Who are you?", W / 2, 270);
+
+  for (let i = 0; i < LIFE_STAGES.length; i++) {
+    const selected = i === titleSelection;
+    ctx.fillStyle = selected ? PAL.wizardGold : PAL.gray;
+    const prefix = selected ? '► ' : '  ';
+    ctx.font = '10px "Press Start 2P"';
+    ctx.textAlign = 'center';
+    ctx.fillText(prefix + LIFE_STAGES[i], W / 2, 310 + i * 36);
+  }
+
+  ctx.fillStyle = PAL.lightGray;
+  ctx.font = '10px "Press Start 2P"';
+  ctx.fillText('↑↓ choose  SPACE start', W / 2, H - 30);
+
+  ctx.textAlign = 'left';
+}
+
+// ========== ENDING SCREEN ==========
+function getWizardMessage() {
+  const stage = LIFE_STAGES[titleSelection];
+  let stageMsg = "";
+  if (titleSelection === 0) stageMsg = "You're at the beginning of\nyour journey. That's actually\nthe best time to get it right.";
+  else if (titleSelection === 1) stageMsg = "You're building something\nimportant. A family, a career,\na future. That takes a plan.";
+  else stageMsg = "You've worked hard to get\nhere. Now it's about making\nsure it all works together.";
+
+  let worryMsg = "";
+  if (quizAnswers.length >= 3) {
+    const worry = quizAnswers[2].index;
+    if (worry === 0) worryMsg = "Retirement doesn't have to be\nscary. It just takes someone\nwho's done this before.";
+    else if (worry === 1) worryMsg = "Protecting the people you love\nis the most human reason to\nplan. Let's make sure you do.";
+    else if (worry === 2) worryMsg = "The fear of a mistake keeps\nmost people frozen. That's\nworse than any wrong move.";
+    else worryMsg = "Trust is earned, not sold.\nThat's exactly why we only\nget paid by you. No one else.";
+  }
+
+  return [
+    "...",
+    "I've been expecting you.",
+    stageMsg,
+    "You've walked through the\nscary headlines, the unsolicited\nadvice, and your own doubts.",
+    worryMsg,
+    "The noise out there is\ndesigned to confuse you.\nThat's not an accident.",
+    "But you made it here.\nThat tells me you're ready\nfor something real.",
+    "You don't have to figure\nthis out alone. That's\nliterally why we exist.",
+    "We're Iconoclastic Capital.\nFee-only. No commissions.\nNo agenda except yours.",
+    "Right here with you.",
+  ];
+}
+
+function triggerEnding() {
+  endingPhase = 0;
+  const msgs = getWizardMessage();
+  showDialogue(msgs);
+  gameState = 'dialogue';
+  // After dialogue, we'll show CTA
+}
+
+function drawEndingCTA() {
+  ctx.fillStyle = 'rgba(10,10,26,0.95)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  for (let i = 0; i < 40; i++) {
+    const sx = (i * 37 + Math.sin(frameCount * 0.01 + i) * 10) % W;
+    const sy = (i * 53 + Math.cos(frameCount * 0.01 + i) * 6) % H;
+    ctx.fillStyle = `rgba(255,255,255,${Math.sin(frameCount * 0.03 + i) * 0.3 + 0.4})`;
+    ctx.fillRect(Math.floor(sx), Math.floor(sy), 2, 2);
+  }
+
+  // Glow
+  const glow = Math.sin(frameCount * 0.02) * 0.1 + 0.3;
+  ctx.fillStyle = `rgba(244, 208, 63, ${glow})`;
+  ctx.beginPath();
+  ctx.arc(W / 2, 120, 60, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Wizard
+  drawSprite(7, 3, 'wizard', 0, 0);
+
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = PAL.wizardGold;
+  ctx.font = '14px "Press Start 2P"';
+  ctx.fillText('Right here with you.', W / 2, 220);
+
+  ctx.fillStyle = PAL.white;
+  ctx.font = '12px "Press Start 2P"';
+  ctx.fillText('Your financial journey', W / 2, 265);
+  ctx.fillText("doesn't have to be solo.", W / 2, 290);
+
+  // CTA Button
+  const btnPulse = Math.sin(frameCount * 0.04) * 3;
+  const btnY = 330 + btnPulse;
+  ctx.fillStyle = PAL.wizardGold;
+  ctx.fillRect(80, btnY, W - 160, 50);
+  ctx.fillStyle = '#0a0a1a';
+  ctx.font = '13px "Press Start 2P"';
+  ctx.fillText("LET'S TALK →", W / 2, btnY + 32);
+
+  ctx.fillStyle = PAL.gray;
+  ctx.font = '10px "Press Start 2P"';
+  ctx.fillText('CLICK or press SPACE', W / 2, H - 30);
+
+  ctx.textAlign = 'left';
+}
+
+// ========== ZONE NAME OVERLAY ==========
+let zoneNameTimer = 0;
+function drawZoneName() {
+  if (zoneNameTimer > 0) {
+    const alpha = zoneNameTimer > 40 ? 1 : zoneNameTimer / 40;
+    ctx.fillStyle = `rgba(0,0,0,${alpha * 0.7})`;
+    ctx.fillRect(0, H / 2 - 36, W, 50);
+    ctx.fillStyle = `rgba(232,232,232,${alpha})`;
+    ctx.font = '16px "Press Start 2P"';
+    ctx.textAlign = 'center';
+    ctx.fillText(ZONES[currentZone].name, W / 2, H / 2 - 4);
+    ctx.textAlign = 'left';
+    zoneNameTimer--;
+  }
+}
+
+// ========== SETUP & MAIN LOOP ==========
+function setupZone() {
+  const z = ZONES[currentZone];
+  player.x = z.playerStart.x;
+  player.y = z.playerStart.y;
+  player.dir = 1; // face up
+  npcs = z.npcs ? z.npcs.map(n => ({ ...n, talked: false })) : [];
+  zoneNameTimer = 80;
+}
+
+function handleInput() {
+  if (gameState === 'title') {
+    // handled in keydown
+  }
+  else if (gameState === 'playing') {
+    moveTimer++;
+    if (moveTimer < 6) return; // movement speed limiter
+
+    let dx = 0, dy = 0;
+    if (keysDown['ArrowUp'] || keysDown['w'] || keysDown['W']) { dy = -1; player.dir = 1; }
+    else if (keysDown['ArrowDown'] || keysDown['s'] || keysDown['S']) { dy = 1; player.dir = 0; }
+    else if (keysDown['ArrowLeft'] || keysDown['a'] || keysDown['A']) { dx = -1; player.dir = 2; }
+    else if (keysDown['ArrowRight'] || keysDown['d'] || keysDown['D']) { dx = 1; player.dir = 3; }
+
+    if (dx !== 0 || dy !== 0) {
+      const nx = player.x + dx;
+      const ny = player.y + dy;
+      if (isWalkable(nx, ny)) {
+        player.x = nx;
+        player.y = ny;
+        player.frame++;
+        player.moving = true;
+        moveTimer = 0;
+
+        // Check exit
+        const z = ZONES[currentZone];
+        if (z.exitTile && player.x === z.exitTile.x && player.y === z.exitTile.y) {
+          if (z.quiz) {
+            showQuiz(z.quiz);
+          } else {
+            startTransition(() => {
+              currentZone++;
+              setupZone();
+            });
+          }
+        }
+
+        // Check quiz trigger
+        if (z.quiz && player.x === z.quiz.trigger.x && player.y === z.quiz.trigger.y) {
+          showQuiz(z.quiz);
+        }
+
+        // Check wizard
+        if (currentZone === 4 && z.wizard) {
+          const dist = Math.abs(player.x - z.wizard.x) + Math.abs(player.y - z.wizard.y);
+          if (dist <= 2) {
+            triggerEnding();
+          }
+        }
+      }
+      moveTimer = 0;
+    } else {
+      player.moving = false;
+    }
+  }
+}
+
+function interact() {
+  if (interactCooldown > 0) return;
+  interactCooldown = 10;
+
+  if (gameState === 'dialogue') {
+    if (!currentDialogue) {
+      if (currentZone === 4 && dialogueQueue.length === 0) {
+        gameState = 'ending';
+      }
+      return;
+    }
+    advanceDialogue();
+    // Check if dialogue is done and we're at wizard
+    if (!currentDialogue && currentZone === 4) {
+      gameState = 'ending';
+    }
+    return;
+  }
+
+  if (gameState === 'quiz') {
+    selectQuizAnswer();
+    return;
+  }
+
+  if (gameState === 'ending') {
+    window.open('https://iconocapital.com/get-started', '_blank');
+    return;
+  }
+
+  if (gameState === 'playing') {
+    // Check for NPC interaction
+    const facingX = player.x + (player.dir === 2 ? -1 : player.dir === 3 ? 1 : 0);
+    const facingY = player.y + (player.dir === 1 ? -1 : player.dir === 0 ? 1 : 0);
+
+    for (const npc of npcs) {
+      if (npc.x === facingX && npc.y === facingY) {
+        showDialogue(npc.lines);
+        npc.talked = true;
+        return;
+      }
+      // Also check if standing adjacent
+      const dist = Math.abs(player.x - npc.x) + Math.abs(player.y - npc.y);
+      if (dist <= 1) {
+        showDialogue(npc.lines);
+        npc.talked = true;
+        return;
+      }
+    }
+  }
+}
+
+function update() {
+  frameCount++;
+  if (interactCooldown > 0) interactCooldown--;
+
+  if (gameState === 'transition') {
+    updateTransition();
+  }
+  else if (gameState === 'playing') {
+    handleInput();
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  if (gameState === 'title') {
+    drawTitleScreen();
+  }
+  else if (gameState === 'ending') {
+    drawEndingCTA();
+  }
+  else {
+    drawZoneBackground(currentZone);
+
+    // Draw NPCs
+    for (const npc of npcs) {
+      drawSprite(npc.x, npc.y, npc.type, 0, frameCount);
+    }
+
+    // Draw wizard in zone 4
+    if (currentZone === 4 && ZONES[4].wizard) {
+      drawSprite(ZONES[4].wizard.x, ZONES[4].wizard.y, 'wizard', 0, frameCount);
+    }
+
+    // Draw player
+    drawSprite(player.x, player.y, 'player', player.dir, player.frame);
+
+    // Zone name
+    drawZoneName();
+
+    // HUD
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, 0, W, 26);
+    ctx.fillStyle = PAL.wizardGold;
+    ctx.font = '10px "Press Start 2P"';
+    ctx.fillText(ZONES[currentZone].name, 8, 18);
+
+    // Dialogue
+    if (gameState === 'dialogue') {
+      drawDialogueBox();
+    }
+    // Quiz
+    if (gameState === 'quiz') {
+      drawQuiz();
+    }
+    // Transition
+    if (gameState === 'transition') {
+      drawTransition();
+    }
+  }
+}
+
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+// ========== INPUT HANDLING ==========
+document.addEventListener('keydown', (e) => {
+  keysDown[e.key] = true;
+
+  if (gameState === 'title') {
+    if (e.key === 'ArrowUp' || e.key === 'w') {
+      titleSelection = (titleSelection - 1 + LIFE_STAGES.length) % LIFE_STAGES.length;
+    }
+    if (e.key === 'ArrowDown' || e.key === 's') {
+      titleSelection = (titleSelection + 1) % LIFE_STAGES.length;
+    }
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      quizAnswers = [{ question: 'Life Stage', answer: LIFE_STAGES[titleSelection], index: titleSelection }];
+      gameState = 'transition';
+      transitionAlpha = 0;
+      transitionDir = 1;
+      transitionCallback = () => {
+        currentZone = 0;
+        setupZone();
+      };
+    }
+  }
+  else if (gameState === 'quiz') {
+    if (e.key === 'ArrowUp' || e.key === 'w') {
+      quizSelection = (quizSelection - 1 + quizData.options.length) % quizData.options.length;
+    }
+    if (e.key === 'ArrowDown' || e.key === 's') {
+      quizSelection = (quizSelection + 1) % quizData.options.length;
+    }
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      interact();
+    }
+  }
+  else if (e.key === ' ' || e.key === 'Enter') {
+    e.preventDefault();
+    interact();
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  keysDown[e.key] = false;
+});
+
+// Mobile controls
+function setupMobile() {
+  const dirs = { 'btn-up': 'ArrowUp', 'btn-down': 'ArrowDown', 'btn-left': 'ArrowLeft', 'btn-right': 'ArrowRight' };
+  for (const [id, key] of Object.entries(dirs)) {
+    const btn = document.getElementById(id);
+    if (!btn) continue;
+    btn.addEventListener('touchstart', (e) => { e.preventDefault(); keysDown[key] = true; });
+    btn.addEventListener('touchend', (e) => { e.preventDefault(); keysDown[key] = false; });
+  }
+  const actionBtn = document.getElementById('action-btn');
+  if (actionBtn) {
+    actionBtn.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (gameState === 'title') {
+        // Start game
+        quizAnswers = [{ question: 'Life Stage', answer: LIFE_STAGES[titleSelection], index: titleSelection }];
+        gameState = 'transition';
+        transitionAlpha = 0;
+        transitionDir = 1;
+        transitionCallback = () => { currentZone = 0; setupZone(); };
+      } else {
+        interact();
+      }
+    });
+  }
+}
+
+// Canvas click for CTA
+canvas.addEventListener('click', () => {
+  if (gameState === 'ending') {
+    window.open('https://iconocapital.com/get-started', '_blank');
+  }
+  if (gameState === 'title') {
+    // Allow clicking to start on desktop too
+  }
+});
+
+// Touch on canvas for title selection
+canvas.addEventListener('touchstart', (e) => {
+  if (gameState === 'ending') {
+    window.open('https://iconocapital.com/get-started', '_blank');
+  }
+});
+
+setupMobile();
+gameLoop();
+</script>
+</body>
+</html>
