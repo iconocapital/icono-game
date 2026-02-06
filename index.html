@@ -165,16 +165,21 @@ let musicGain = null;
 let musicPlaying = false;
 
 function initAudio() {
-  if (audioCtx) return;
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  musicGain = audioCtx.createGain();
-  musicGain.gain.value = 0.12;
-  musicGain.connect(audioCtx.destination);
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    musicGain = audioCtx.createGain();
+    musicGain.gain.value = 0.12;
+    musicGain.connect(audioCtx.destination);
+  }
+  // Resume if suspended (browser autoplay policy)
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
 }
 
 // Play a single chiptune note
 function playNote(freq, duration, type = 'square', gainVal = 0.1, delay = 0) {
-  if (!audioCtx) return;
+  if (!audioCtx || audioCtx.state === 'suspended') return;
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
   osc.type = type;
@@ -1455,6 +1460,7 @@ function gameLoop() {
 // ========== INPUT HANDLING ==========
 document.addEventListener('keydown', (e) => {
   keysDown[e.key] = true;
+  initAudio();
 
   if (gameState === 'title') {
     if (e.key === 'ArrowUp' || e.key === 'w') {
@@ -1536,16 +1542,15 @@ function setupMobile() {
 
 // Canvas click for CTA
 canvas.addEventListener('click', () => {
+  initAudio();
   if (gameState === 'ending') {
     window.open('https://iconocapital.com/get-started', '_blank');
-  }
-  if (gameState === 'title') {
-    // Allow clicking to start on desktop too
   }
 });
 
 // Touch on canvas for title selection
 canvas.addEventListener('touchstart', (e) => {
+  initAudio();
   if (gameState === 'ending') {
     window.open('https://iconocapital.com/get-started', '_blank');
   }
